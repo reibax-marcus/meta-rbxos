@@ -1,0 +1,35 @@
+This README file contains information on the contents of the meta-rbxos layer.
+
+Please see the corresponding sections below for details.
+
+Dependencies
+============
+
+  URI: http://git.yoctoproject.org/git/poky
+  branch: honister
+
+  URI: https://github.com/openembedded/meta-openembedded.git
+  branch: honister
+
+  URI: https://github.com/reibax-marcus/meta-scipy.git
+  branch: honister
+
+Patches
+=======
+
+Please submit any patches against the meta-rbxos layer to the maintainer:
+
+Maintainer: Xabier Marquiegui <reibax@gmail.com>
+
+Table of Contents
+=================
+
+  I. Adding the meta-rbxos layer to your build
+ II. Misc
+
+
+I. Adding the meta-rbxos layer to your build
+=================================================
+
+Run 'bitbake-layers add-layer meta-rbxos'
+
