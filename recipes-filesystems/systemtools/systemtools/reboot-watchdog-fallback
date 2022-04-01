@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# 516 seconds is the maximum allowed watchdog timeout
+FALLBACK_TIMEOUT="516"
+
+while ! watchdog-manager -s "${FALLBACK_TIMEOUT}" ; do
+    echo "watchdog-manager error: retrying..." | tee /dev/console
+    sleep 1
+done
+
+echo "Reboot watchdog fallback set to ${FALLBACK_TIMEOUT}s" | tee /dev/console

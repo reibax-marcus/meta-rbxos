@@ -1,0 +1,99 @@
+#!/bin/bash
+
+identify_partitions()
+{
+    ROOT="unknown"
+    # shellcheck disable=SC2013,SC2006
+    for i in `cat /proc/cmdline`; do
+        case "$i" in
+            root=*)
+                export ROOT="${i#root=}"
+                break
+                ;;
+        esac
+    done
+    if [ "${ROOT}" = "unknown" ] || [ -z "${ROOT}" ] || [ ! -e "${ROOT}" ] ; then
+        echo "ERROR: root partition not found in cmdline. ${ROOT}" >&2
+        exit 1
+    fi
+    ROOTDEV="$(basename "${ROOT}" | cut -d'p' -f1)"
+    ROOTPART="$(basename "${ROOT}" | cut -d'p' -f2)"
+    if [ "${ROOTPART}" = "5" ] ; then
+        export BOOTPART="/dev/${ROOTDEV}p1"
+        export OVERLAY_DEV_STORAGE="/dev/${ROOTDEV}p7"
+        export OVERLAY_DEV_BACKUP="/dev/${ROOTDEV}p8"
+    else
+        export BOOTPART="/dev/${ROOTDEV}p2"
+        export OVERLAY_DEV_STORAGE="/dev/${ROOTDEV}p8"
+        export OVERLAY_DEV_BACKUP="/dev/${ROOTDEV}p7"
+    fi
+}
+
+# Oredered exit procedure
+clean_exit() {
+    eval "${EXIT_STEPS}"
+}
+trap clean_exit EXIT TERM INT ABRT HUP
+EXIT_STEPS=""
+
+# Easy error print and exit
+error_exit() {
+    echo "$1"
+    exit 1
+}
+
+print_help() {
+    echo "factory_reset [-h] or [action] [action] ..."
+    echo
+    echo "actions to perform:"
+    echo "    SYS: Reset system memory to factory status (overrides any other alternative that was meant to preserve something)"
+    echo "   nNET: Reset system memory to factory status, but keep network configuration"
+    echo "   oNET: Restore factory default network configuration"
+    echo "    HDD: Repartition and reformat SATA disk"
+    echo
+
+    exit 1
+}
+# shellcheck disable=SC2089
+ACTION_LIST="-e SYS -e nNET -e oNET -e HDD"
+
+if [ $# -lt 1 ] ; then
+    print_help
+fi
+
+FRMODE=""
+for arg in "$@" ; do
+    # shellcheck disable=SC2086,SC2090
+    if echo $arg | grep -q ${ACTION_LIST} ; then
+        if [ -z "${FRMODE}" ] ; then
+            FRMODE="${arg}"
+        else
+            FRMODE="${FRMODE} ${arg}"
+        fi
+    fi
+done
+
+
+
+if [ "$1" = "-h" ] || [ "$1" == "--help" ] ; then
+    print_help
+fi
+
+identify_partitions
+
+# Temp dir creation and destruction
+TEMP_DIR="/tmp/rbxos_fr_$$"
+mkdir -p "${TEMP_DIR}" || error_exit "ERROR: Could not create ${TEMP_DIR}"
+EXIT_STEPS="rm -fr \"${TEMP_DIR}\"; ${EXIT_STEPS}"
+
+# Mount overlay partition
+OVERLAY_MOUNTPOINT="${TEMP_DIR}/bootmount"
+mkdir -p "${OVERLAY_MOUNTPOINT}" || error_exit "ERROR: Could not create ${OVERLAY_MOUNTPOINT}"
+mount "${OVERLAY_DEV_STORAGE}" "${OVERLAY_MOUNTPOINT}"
+EXIT_STEPS="umount \"${OVERLAY_MOUNTPOINT}\"; ${EXIT_STEPS}"
+
+# Write factory reset trigger
+echo "${FRMODE}" > "${OVERLAY_MOUNTPOINT}/.formatme"
+
+# Reboot
+reboot

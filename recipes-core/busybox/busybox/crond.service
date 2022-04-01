@@ -1,0 +1,14 @@
+[Unit]
+Description=Crond service
+After=multi-user.target
+
+[Service]
+Type=forking
+Restart=always
+RestartSec=3
+ExecStartPre=/bin/mkdir -p /var/spool/cron/crontabs
+ExecStart=/usr/sbin/crond
+ExecReload=/bin/kill -HUP $MAINPID
+
+[Install]
+WantedBy=multi-user.target

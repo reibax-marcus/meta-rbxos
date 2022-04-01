@@ -1,0 +1,5 @@
+#!/bin/sh
+
+GPG_KEYDIR=/usr/share/gpg-keys
+
+find "${GPG_KEYDIR}" -type f -exec gpg --ignore-time-conflict --import {} \;

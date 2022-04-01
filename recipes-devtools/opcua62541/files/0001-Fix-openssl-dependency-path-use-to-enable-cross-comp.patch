@@ -1,0 +1,30 @@
+From de416c4951ca88a985cc7bbd52856bc46d06d50c Mon Sep 17 00:00:00 2001
+From: Xabier Marquiegui <reibax@gmail.com>
+Date: Sat, 5 Mar 2022 16:49:42 +0100
+Subject: [PATCH] Fix openssl dependency path use to enable cross compilation
+ of this package as a dependency in yocto
+
+%% original patch: 0001-Fix-openssl-dependency-path-use-to-enable-cross-comp.patch
+---
+ CMakeLists.txt | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ae6405e9..a1062118 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -475,7 +475,10 @@ if(UA_ENABLE_ENCRYPTION)
+         # use the OpenSSL encryption library
+         # https://cmake.org/cmake/help/v3.0/module/FindOpenSSL.html
+         find_package(OpenSSL REQUIRED)
+-        list(APPEND open62541_LIBRARIES ${OPENSSL_LIBRARIES})
++        # rbxos fix - probably not correct, but it works for us
++        # These two lines allow us to avoid absolute paths on the generated open62541Targets.cmake file
++        ua_architecture_append_to_library(ssl)
++        ua_architecture_append_to_library(crypto)
+     else()
+         # The recommended way is to install mbedtls via the OS package manager. If
+         # that is not possible, manually compile mbedTLS and set the cmake variables
+-- 
+2.25.1
+

@@ -1,0 +1,5 @@
+# Start watchdog at boot time? 0 or 1
+run_watchdog=1
+
+# watchdog run options
+# watchdog_options="-v --no-action"

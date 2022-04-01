@@ -1,0 +1,12 @@
+[Unit]
+Description=Trigger watchdog in case reboot fails.
+Conflicts=halt.target
+Before=watchdog.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStop=/usr/bin/reboot-watchdog-fallback
+
+[Install]
+WantedBy=multi-user.target

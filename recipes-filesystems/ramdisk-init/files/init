@@ -1,0 +1,260 @@
+#!/bin/busybox sh
+
+VERSION=1.0.2
+ROOTFSTYPE=squashfs
+TRIES=3
+SQUASHFSDIR=/squashfs
+OVERLAYDIR=/overlay
+OVERLAYDIR_RW=${OVERLAYDIR}/rw
+OVERLAYDIR_WORK=${OVERLAYDIR}/work
+FRFILE="${OVERLAYDIR}/.formatme"
+MERGE_DIR=/mnt/root
+REPART_BOOTMOUNT_DIR="/mnt/boot"
+ROOT="x"
+BOOTPART="x"
+HDD_DEVICE="/dev/sda"
+
+identify_partitions()
+{
+    # shellcheck disable=SC2013,SC2006
+    for i in `cat /proc/cmdline`; do
+        case "$i" in
+            root=*)
+                export ROOT="${i#root=}"
+                export ROOTPART="${ROOT#/dev/}"
+                export BOOTDEV="${ROOTPART%%p*}"
+                if [ "${ROOT}" = "/dev/${BOOTDEV}p5" ] ; then
+                    export BOOTPART="/dev/${BOOTDEV}p1"
+                    export OVERLAY_DEV_STORAGE=/dev/${BOOTDEV}p7
+                    export OVERLAY_DEV_BACKUP=/dev/${BOOTDEV}p8
+                else
+                    export BOOTPART="/dev/${BOOTDEV}p2"
+                    export OVERLAY_DEV_STORAGE=/dev/${BOOTDEV}p8
+                    export OVERLAY_DEV_BACKUP=/dev/${BOOTDEV}p7
+                fi
+                break
+                ;;
+        esac
+    done
+    if [ "${ROOT}" = "x" ] || [ "${BOOTPART}" = "x" ] ; then
+        echo "Could not determine boot and root partitions from kernel cmdline."
+        rescue_shell
+    fi
+}
+
+rescue_shell()
+{
+    echo "Something went wrong. Dropping to a shell."
+    exec sh
+}
+
+clean_overlay_netconfig()
+{
+    echo "RFD: Clean Network Configuration"
+    rm -fr "${OVERLAYDIR_RW}/etc/systemd/network"
+}
+
+clean_overlay_keep_netcfg()
+{
+    echo "RFD: Clean overlay but keep network configuration"
+    if [ -n "${OVERLAYDIR_RW}" ] && [ -e "${OVERLAYDIR_RW}" ] ; then
+        ORGDIR="$(pwd)"
+        cd "${OVERLAYDIR_RW}" || return 1
+        tar cjf /tmp/netcfg.tar.xz "etc/systemd/network"
+        # shellcheck disable=SC2046
+        rm -fr $(find "${OVERLAYDIR_RW}"  | grep -v "^${OVERLAYDIR_RW}$")
+        tar xjf /tmp/netcfg.tar.xz
+        rm -f /tmp/netcfg.tar.xz
+        cd "${ORGDIR}" || return 1
+    else
+        echo "ERROR: Couldn't find overlay partition" >&2
+    fi
+}
+
+part_format_hdd()
+{
+    echo "RFD: Partition and format HDD"
+    if [ -e "${HDD_DEVICE}" ] ; then
+
+        fdisk ${HDD_DEVICE} << EOF
+d
+n
+p
+
+
+
+w
+EOF
+        mkfs.ext4 -F "${HDD_DEVICE}1"
+    fi
+}
+
+check_factory_reset_request()
+{
+    # Mount real ext4 fs into overlay
+    mkdir -p "${OVERLAYDIR}"
+    mkdir -p "${REPART_BOOTMOUNT_DIR}"
+    FORMATOVERLAY=0
+
+    # Retry mount to allow mmc to be ready
+    local n=0
+    until [ $n -ge $TRIES ]
+    do
+        mount "${BOOTPART}" "${REPART_BOOTMOUNT_DIR}" && break
+        n=$((n + 1))
+        sleep 1
+    done
+    [ $n -lt $TRIES ] || rescue_shell
+
+    if [ -f "${REPART_BOOTMOUNT_DIR}/.repart_format" ] ; then
+        echo "Formatting ${OVERLAY_DEV_BACKUP}..."
+        mkfs.ext4 -F "${OVERLAY_DEV_BACKUP}" -O 64bit || rescue_shell
+        FORMATOVERLAY=1
+    else
+        n=0
+        until [ $n -ge $TRIES ]
+        do
+            mount -t ext4 "${OVERLAY_DEV_STORAGE}" "${OVERLAYDIR}" && break
+            n=$((n + 1))
+            sleep 1
+        done
+        [ $n -lt $TRIES ] || rescue_shell
+
+        if [ -f "${FRFILE}" ] ; then
+            if grep -q "SYS" "${FRFILE}" ; then
+                FORMATOVERLAY=1
+            fi
+            if grep -q "oNET" "${FRFILE}" ; then
+                clean_overlay_netconfig
+            fi
+            if grep -q "nNET" "${FRFILE}" ; then
+                clean_overlay_keep_netcfg
+            fi
+            if grep -q "HDD" "${FRFILE}" ; then
+                part_format_hdd
+            fi
+        fi
+    fi
+
+    if mount | grep -q "${OVERLAYDIR}" ; then
+        rm -f "${FRFILE}"
+        umount "${OVERLAYDIR}" || rescue_shell
+    fi
+
+    # If format request marker comes from a repartition upgrade both partitions need to be formatted
+    if [ $FORMATOVERLAY -ne 0 ] ; then
+        echo "Formatting ${OVERLAY_DEV_STORAGE}..."
+        mkfs.ext4 -F "${OVERLAY_DEV_STORAGE}" -O 64bit || rescue_shell
+        rm -f "${REPART_BOOTMOUNT_DIR}/.repart_format"
+        sync
+    fi
+
+    if mount | grep -q "${REPART_BOOTMOUNT_DIR}" ; then
+        umount "${REPART_BOOTMOUNT_DIR}" || rescue_shell
+    fi
+
+    # Clean directories
+    rm -fr "${OVERLAYDIR}" "${REPART_BOOTMOUNT_DIR}"
+}
+
+prepare_overlay()
+{
+    # Mount real ext4 fs into overlay
+    [ ! -d ${OVERLAYDIR} ] && mkdir ${OVERLAYDIR}
+
+    # Try a bit because mmc is not properly initialized first
+    local n=0
+    until [ $n -ge $TRIES ]
+    do
+        mount -t ext4 ${OVERLAY_DEV_STORAGE} ${OVERLAYDIR} && break
+        n=`expr $n + 1`
+        sleep 1
+    done
+    [ $n -lt $TRIES ] || rescue_shell
+
+    # Create 'rw' and 'work' directories into overlay
+    [ ! -d ${OVERLAYDIR_RW} ] && mkdir -p ${OVERLAYDIR_RW}
+    [ ! -d ${OVERLAYDIR_WORK} ] && mkdir -p ${OVERLAYDIR_WORK}
+}
+
+mount_root_partition()
+{
+    echo "* Get root partition at ${ROOT}"
+
+    [ ! -d ${SQUASHFSDIR} ] && mkdir -p ${SQUASHFSDIR}
+
+    # Try a bit because mmc is not properly initialized first
+    local n=0
+    until [ $n -ge $TRIES ]
+    do
+        mount -t $ROOTFSTYPE -o ro ${ROOT} ${SQUASHFSDIR} && break
+        n=`expr $n + 1`
+        sleep 1
+    done
+    [ $n -lt $TRIES ] || rescue_shell
+}
+
+do_overlay_merge()
+{
+    [ ! -d ${MERGE_DIR} ] && mkdir -p ${MERGE_DIR}
+    mount -t overlay -o ro,noatime,lowerdir=${SQUASHFSDIR},upperdir=${OVERLAYDIR_RW},workdir=${OVERLAYDIR_WORK} overlay ${MERGE_DIR}
+    if [ $? -ne 0 ]; then
+        echo "* Error: Something was wrong preparing overlay"
+        echo "* Aborting boot."
+        exec sh
+    fi
+}
+
+set_eth0_default_config()
+{
+    local eth0_network_systemd_network_path=${OVERLAYDIR_RW}/etc/systemd/network
+    local eth0_network=${eth0_network_systemd_network_path}/eth0.network
+
+    # eth0.network file doesn't exist on the overlay by default
+    # When the file does not exist, the system uses the squashfs version
+    # If eth0.network is a character special file that means that it is marked
+    # to exist as a deleted file. Since eth0.network is a mandatory file for system
+    # operation this will be interpreted as a eth0_default_config request.
+    if [ -c ${eth0_network} ]; then
+        echo "* Setting eth0 default address"
+        mkdir -p ${eth0_network_systemd_network_path}
+        rm -f "${eth0_network}"
+    fi
+}
+
+# MAIN
+echo "** Init initrd execution (version: ${VERSION}) **"
+
+# populate /dev directory
+mount -t devtmpfs none /dev
+
+# We need /proc to be able to find mtab
+[ ! -d /proc ] && mkdir /proc
+[ ! -d /sys ] && mkdir /sys
+[ ! -d /tmp ] && mkdir /tmp
+
+mount -t proc none /proc
+mount -t sysfs none /sys
+
+# We do need /tmp for aufs mount to work
+mount -t tmpfs tmpfs /tmp
+
+# Get boot and root partitions
+identify_partitions
+
+check_factory_reset_request
+prepare_overlay
+set_eth0_default_config
+mount_root_partition
+do_overlay_merge
+
+#clean up
+umount /proc
+umount /sys
+umount /tmp
+umount /dev
+
+echo "** Finish initrd execution **"
+
+# Change root and start systemd
+exec switch_root ${MERGE_DIR} /sbin/init
