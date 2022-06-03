@@ -1,0 +1,10 @@
+# short-description: Creates SD card image for rbxos
+# long-description: Creates SD card image for rbxos
+part --source rawcopy --sourceparams="file=flash-image.bin" --no-table --offset 2M
+part --source bootimg-partition --fstype=vfat --offset=64M --fixed-size=64M
+part --source bootimg-partition --fstype=vfat --fixed-size=64M
+part --source rootfs --fstype squashfs --align 4 --type logical --fixed-size=1990M
+part --source rootfs --fstype squashfs --align 4 --type logical --fixed-size=1990M
+part --fstype=ext4 --align 4 --type logical --fixed-size=1990M
+part --fstype=ext4 --align 4 --type logical --fixed-size=1990M
+

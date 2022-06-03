@@ -20,5 +20,6 @@ do_deploy:append() {
         export VBN="${UBOOT_BINARYNAME}-${PACKAGE_ARCH}"
     fi
     ln -sfT "${VFN}.version" "${DEPLOYDIR}/${VBN}.version"
+    ln -sfT "${VBN}.version" Image.version
 }
 
